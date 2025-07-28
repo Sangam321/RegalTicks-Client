@@ -133,7 +133,7 @@ const Navbar = () => {
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuItem>
-                    <Link to="/my-learning">My Purchase</Link>
+                    <Link to="/my-collection">My Purchase</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem>
                     <Link to="/profile">Edit Profile</Link>
@@ -310,7 +310,7 @@ const MobileNavbar = ({ user }) => {
           {user ? (
             <>
               <Link
-                to="/my-learning"
+                to="/my-collection"
                 className="flex items-center gap-3 p-3 rounded-lg font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-[#146321] dark:hover:text-green-400 transition-all duration-200"
               >
                 <BookOpen size={20} />
