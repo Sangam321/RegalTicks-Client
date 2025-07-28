@@ -19,7 +19,7 @@ import CreateWatch_Details from "./pages/admin/watch_details/CreateWatch_Details
 import EditWatch_Details from "./pages/admin/watch_details/EditWatch_Details";
 
 import AboutUs from "./pages/buyer/About_us";
-import MyLearning from "./pages/buyer/MyLearning";
+import MyCollection from "./pages/buyer/MyCollection";
 import Profile from "./pages/buyer/Profile";
 import SearchPage from "./pages/buyer/SearchPage";
 import Services from "./pages/buyer/Services";
@@ -67,10 +67,10 @@ const appRouter = createBrowserRouter([
         ),
       },
       {
-        path: "my-learning",
+        path: "my-collection",
         element: (
           <ProtectedRoute>
-            <MyLearning />
+            <MyCollection />
           </ProtectedRoute>
         ),
       },
