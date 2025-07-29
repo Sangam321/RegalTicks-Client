@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-const COURSE_API = "http://localhost:8080/api/v1/watch";
+const COURSE_API = "https://localhost:8080/api/v1/watch";
 
 export const watchApi = createApi({
   reducerPath: "watchApi",
