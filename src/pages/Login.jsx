@@ -23,21 +23,26 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 const Login = () => {
-  // Existing state
+  // Form input states
   const [signupInput, setSignupInput] = useState({
     name: "",
     email: "",
     password: "",
   });
   const [loginInput, setLoginInput] = useState({ email: "", password: "" });
+
+  // Authentication states
   const [remainingAttempts, setRemainingAttempts] = useState(5);
   const [lockTime, setLockTime] = useState(0);
-  const [signupRecaptchaToken, setSignupRecaptchaToken] = useState(null);
-  const recaptchaRef = useRef();
   const [rateLimitExceeded, setRateLimitExceeded] = useState(false);
   const [countdown, setCountdown] = useState(180);
+
+  // UI states
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [lastAction, setLastAction] = useState(null);
+
+  // Validation states
   const [signupPasswordError, setSignupPasswordError] = useState("");
   const [signupNameError, setSignupNameError] = useState("");
   const [signupEmailError, setSignupEmailError] = useState("");
@@ -46,15 +51,21 @@ const Login = () => {
     message: "",
     color: "bg-gray-200",
   });
-  const [lastAction, setLastAction] = useState(null);
 
-  // New OTP state
+  // reCAPTCHA state
+  const [signupRecaptchaToken, setSignupRecaptchaToken] = useState(null);
+  const recaptchaRef = useRef();
+
+  // OTP states
   const [otp, setOtp] = useState("");
   const [showOtpVerification, setShowOtpVerification] = useState(false);
   const [otpEmail, setOtpEmail] = useState("");
   const [otpCountdown, setOtpCountdown] = useState(60);
+  const [otpAttempts, setOtpAttempts] = useState(0);
+  const [otpRateLimitExceeded, setOtpRateLimitExceeded] = useState(false);
+  const [otpRateLimitCountdown, setOtpRateLimitCountdown] = useState(5 * 60);
 
-  // Existing mutations
+  // API mutations
   const [
     registerUser,
     {
@@ -73,14 +84,13 @@ const Login = () => {
       isSuccess: loginIsSuccess,
     },
   ] = useLoginUserMutation();
-
-  // New OTP mutations
-  const [verifyOtp, { isLoading: isVerifyingOtp }] = useVerifyOtpMutation();
+  const [verifyOtp, { isLoading: isVerifyingOtp, error: verifyOtpError }] =
+    useVerifyOtpMutation();
   const [resendOtp, { isLoading: isResendingOtp }] = useResendOtpMutation();
 
   const navigate = useNavigate();
 
-  // Countdown timer effect
+  // Login rate limit countdown
   useEffect(() => {
     let timer;
     if (rateLimitExceeded && countdown > 0) {
@@ -95,7 +105,7 @@ const Login = () => {
     return () => clearInterval(timer);
   }, [rateLimitExceeded, countdown]);
 
-  // OTP countdown effect
+  // OTP resend countdown
   useEffect(() => {
     let timer;
     if (showOtpVerification && otpCountdown > 0) {
@@ -104,16 +114,108 @@ const Login = () => {
     return () => clearTimeout(timer);
   }, [showOtpVerification, otpCountdown]);
 
-  // Check for existing rate limit on mount
+  // OTP rate limit countdown 
+  useEffect(() => {
+    let timer;
+    if (otpRateLimitExceeded && otpRateLimitCountdown > 0) {
+      timer = setInterval(() => {
+        setOtpRateLimitCountdown((prev) => prev - 1);
+      }, 1000);
+    } else if (otpRateLimitCountdown === 0) {
+      setOtpRateLimitExceeded(false);
+      setOtpRateLimitCountdown(5 * 60);
+      setOtpAttempts(0);
+      localStorage.removeItem("otpRateLimitExpiry");
+    }
+    return () => clearInterval(timer);
+  }, [otpRateLimitExceeded, otpRateLimitCountdown]);
+
+  // Check for existing rate limits on component mount
   useEffect(() => {
     const expiry = localStorage.getItem("rateLimitExpiry");
     if (expiry && Date.now() < expiry) {
       setRateLimitExceeded(true);
       setCountdown(Math.ceil((expiry - Date.now()) / 1000));
     }
+
+    const otpExpiry = localStorage.getItem("otpRateLimitExpiry");
+    if (otpExpiry && Date.now() < otpExpiry) {
+      setOtpRateLimitExceeded(true);
+      setOtpRateLimitCountdown(Math.ceil((otpExpiry - Date.now()) / 1000));
+    }
   }, []);
 
-  // Existing helper functions
+  // Handle OTP verification errors
+  useEffect(() => {
+    if (verifyOtpError) {
+      if (verifyOtpError.status === 429) {
+        // Server-enforced rate limit
+        const retryAfter = 5 * 60; // 15 minutes in seconds
+        setOtpRateLimitExceeded(true);
+        setOtpRateLimitCountdown(retryAfter);
+        localStorage.setItem("otpRateLimitExpiry", Date.now() + retryAfter * 1000);
+        toast.error("Too many OTP attempts. Please try again in 5 minutes.");
+      } else {
+        const newAttempts = otpAttempts + 1;
+        setOtpAttempts(newAttempts);
+
+        if (newAttempts >= 3) {
+          const retryAfter = 5 * 60; // 5 minutes in seconds
+          setOtpRateLimitExceeded(true);
+          setOtpRateLimitCountdown(retryAfter);
+          localStorage.setItem("otpRateLimitExpiry", Date.now() + retryAfter * 1000);
+          toast.error("Too many OTP attempts. Please try again in 5 minutes.");
+        } else {
+          toast.error(verifyOtpError.data?.message || "Invalid OTP. Please try again.");
+        }
+      }
+    }
+  }, [verifyOtpError]);
+
+  // Handle login errors
+  useEffect(() => {
+    if (loginError) {
+      if (loginError.status === 429) {
+        setRateLimitExceeded(true);
+        const retryAfter = loginError.data?.retryAfter || 180;
+        setCountdown(retryAfter);
+        localStorage.setItem("rateLimitExpiry", Date.now() + retryAfter * 1000);
+        toast.error(`Too many attempts. Please try again in ${Math.ceil(retryAfter / 60)} minutes.`);
+      } else if (loginError.data?.remainingAttempts !== undefined) {
+        setRemainingAttempts(loginError.data.remainingAttempts);
+      } else if (loginError.data?.lockTime !== undefined) {
+        const minutes = Math.ceil(loginError.data.lockTime / 60);
+        setLockTime(minutes);
+        toast.error(`Account locked. Try again in ${minutes} minutes.`);
+      } else if (remainingAttempts < 5) {
+        toast.error(`Incorrect credentials. ${remainingAttempts} attempts remaining.`);
+      } else {
+        toast.error(loginError.data?.message || "Login Failed");
+      }
+    }
+
+    if (registerError) {
+      toast.error(registerError.data?.message || "Signup Failed");
+    }
+  }, [loginError, registerError, remainingAttempts]);
+
+  // Handle successful authentication
+  useEffect(() => {
+    if (loginIsSuccess && loginData && !showOtpVerification) {
+      if (loginData.requiresPasswordReset) {
+        navigate("/reset-password", { state: { expired: true } });
+      } else {
+        toast.success(loginData.message || "Login successful.");
+        navigate("/");
+      }
+    }
+
+    if (registerIsSuccess && registerData) {
+      toast.success(registerData.message || "Signup successful.");
+    }
+  }, [loginIsSuccess, registerIsSuccess, loginData, registerData, showOtpVerification, navigate]);
+
+  // Password validation
   const validatePassword = (password) => {
     let score = 0;
     let message = "";
@@ -147,6 +249,7 @@ const Login = () => {
     return password.length >= 8 && score >= 4;
   };
 
+  // Name validation
   const validateName = (name) => {
     if (name.length < 6) {
       setSignupNameError("Username must be at least 6 characters");
@@ -156,6 +259,7 @@ const Login = () => {
     return true;
   };
 
+  // Email validation
   const validateEmail = (email) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
@@ -166,6 +270,7 @@ const Login = () => {
     return true;
   };
 
+  // Input change handler
   const changeInputHandler = (e, type) => {
     const { name, value } = e.target;
     if (type === "signup") {
@@ -178,7 +283,7 @@ const Login = () => {
     }
   };
 
-  // Modified login handler
+  // Registration handler
   const handleRegistration = async (type) => {
     if (type === "signup" && !signupRecaptchaToken) {
       toast.error("Please verify you're not a robot!");
@@ -216,25 +321,41 @@ const Login = () => {
     }
   };
 
-  // New OTP handlers
+  // OTP verification handler
   const handleVerifyOtp = async () => {
     if (!otp || otp.length !== 6) {
       toast.error("Please enter a valid 6-digit OTP");
       return;
     }
 
+    if (otpRateLimitExceeded) {
+      const minutes = Math.floor(otpRateLimitCountdown / 60);
+      const seconds = otpRateLimitCountdown % 60;
+      toast.error(`Too many attempts. Please try again in ${minutes}m ${seconds}s`);
+      return;
+    }
+
     try {
       const response = await verifyOtp({ email: otpEmail, otp });
       if (response.data?.success) {
+        setOtpAttempts(0);
         toast.success("Login successful");
         navigate("/");
       }
     } catch (err) {
-      toast.error(err.data?.message || "OTP verification failed");
+      console.error("OTP verification error:", err);
     }
   };
 
+  // OTP resend handler
   const handleResendOtp = async () => {
+    if (otpRateLimitExceeded) {
+      const minutes = Math.floor(otpRateLimitCountdown / 60);
+      const seconds = otpRateLimitCountdown % 60;
+      toast.error(`Please wait ${minutes}m ${seconds}s before requesting a new OTP.`);
+      return;
+    }
+
     try {
       await resendOtp({ email: otpEmail });
       setOtpCountdown(60);
@@ -244,59 +365,7 @@ const Login = () => {
     }
   };
 
-  useEffect(() => {
-    if (loginError) {
-      if (loginError.status === 429) {
-        setRateLimitExceeded(true);
-        const retryAfter = loginError.data?.retryAfter || 180;
-        setCountdown(retryAfter);
-        localStorage.setItem("rateLimitExpiry", Date.now() + retryAfter * 1000);
-        toast.error(
-          `Too many attempts. Please try again in ${Math.ceil(
-            retryAfter / 60
-          )} minutes.`
-        );
-      } else if (loginError.data?.remainingAttempts !== undefined) {
-        setRemainingAttempts(loginError.data.remainingAttempts);
-      } else if (loginError.data?.lockTime !== undefined) {
-        const minutes = Math.ceil(loginError.data.lockTime / 60);
-        setLockTime(minutes);
-        toast.error(`Account locked. Try again in ${minutes} minutes.`);
-      } else if (remainingAttempts < 5) {
-        toast.error(
-          `Incorrect credentials. ${remainingAttempts} attempts remaining.`
-        );
-      } else {
-        toast.error(loginError.data?.message || "Login Failed");
-      }
-    }
-
-    if (registerError) {
-      toast.error(registerError.data?.message || "Signup Failed");
-    }
-
-    if (loginIsSuccess && loginData && !showOtpVerification) {
-      if (loginData.requiresPasswordReset) {
-        navigate("/reset-password", { state: { expired: true } });
-      } else {
-        toast.success(loginData.message || "Login successful.");
-        navigate("/");
-      }
-    }
-
-    if (registerIsSuccess && registerData) {
-      toast.success(registerData.message || "Signup successful.");
-    }
-  }, [
-    loginIsSuccess,
-    registerIsSuccess,
-    loginError,
-    registerError,
-    loginData,
-    registerData,
-    showOtpVerification,
-  ]);
-
+  // Check if signup is disabled
   const isSignupDisabled =
     !signupInput.name ||
     !signupInput.email ||
@@ -307,8 +376,11 @@ const Login = () => {
     passwordStrength.score < 4 ||
     !signupRecaptchaToken;
 
-  // Return OTP verification UI if needed
+  // OTP Verification UI
   if (showOtpVerification) {
+    const minutes = Math.floor(otpRateLimitCountdown / 60);
+    const seconds = otpRateLimitCountdown % 60;
+
     return (
       <div className="min-h-screen bg-white dark:bg-gray-900 py-12 px-4">
         <div className="w-full max-w-md mx-auto">
@@ -335,12 +407,24 @@ const Login = () => {
                   placeholder="Enter 6-digit code"
                   className="text-center text-xl tracking-widest h-14"
                   autoFocus
+                  disabled={otpRateLimitExceeded}
                 />
+                {otpRateLimitExceeded ? (
+                  <p className="text-sm text-red-600 mt-1">
+                    Too many attempts. Try again in {minutes}m {seconds}s
+                  </p>
+                ) : (
+                  otpAttempts > 0 && (
+                    <p className="text-sm text-yellow-600 mt-1">
+                      {3 - otpAttempts} attempts remaining
+                    </p>
+                  )
+                )}
               </div>
               <Button
                 onClick={handleVerifyOtp}
                 className="w-full h-12 bg-[#146321] hover:bg-[#10511a]"
-                disabled={isVerifyingOtp}
+                disabled={isVerifyingOtp || otpRateLimitExceeded}
               >
                 {isVerifyingOtp ? (
                   <>
@@ -358,7 +442,7 @@ const Login = () => {
                 <button
                   type="button"
                   onClick={handleResendOtp}
-                  disabled={otpCountdown > 0 || isResendingOtp}
+                  disabled={otpCountdown > 0 || isResendingOtp || otpRateLimitExceeded}
                   className="text-[#146321] hover:underline disabled:opacity-50"
                 >
                   {isResendingOtp
@@ -375,6 +459,7 @@ const Login = () => {
     );
   }
 
+  // Main Login/Signup UI
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900 py-12 px-4">
       <div className="w-full max-w-md mx-auto -mt-1 md:-mt-1">
